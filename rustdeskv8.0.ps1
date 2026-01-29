@@ -48,9 +48,12 @@ if ($installedVersion -eq $latestVersion) {
     Write-Host ""
     Write-Host "Applying configuration..." -ForegroundColor Yellow
     Push-Location "$env:ProgramFiles\RustDesk"
-    $rustdesk_id = (.\rustdesk.exe --get-id 2>$null).Trim()
     .\rustdesk.exe --config $rustdesk_cfg
+    Start-Sleep -Seconds 2
     .\rustdesk.exe --password $rustdesk_pw
+    Start-Sleep -Seconds 2
+    $idOutput = & .\rustdesk.exe --get-id 2>&1
+    $rustdesk_id = if ($idOutput) { $idOutput.ToString().Trim() } else { "Unknown" }
     Pop-Location
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Cyan
@@ -135,11 +138,29 @@ if ($attempt -ge $maxAttempts) {
 
 # Apply configuration
 Write-Host "[6/6] Applying configuration..." -ForegroundColor Yellow
-Start-Sleep -Seconds 3  # Give service time to initialize
+Start-Sleep -Seconds 5  # Give service time to initialize
 Push-Location "$env:ProgramFiles\RustDesk"
-$rustdesk_id = (.\rustdesk.exe --get-id 2>$null).Trim()
+
+# Apply config and password
 .\rustdesk.exe --config $rustdesk_cfg
+Start-Sleep -Seconds 2
 .\rustdesk.exe --password $rustdesk_pw
+Start-Sleep -Seconds 2
+
+# Get the ID (may take a moment to generate)
+$rustdesk_id = ""
+$idAttempts = 0
+while ([string]::IsNullOrWhiteSpace($rustdesk_id) -and $idAttempts -lt 10) {
+    $idAttempts++
+    $idOutput = & .\rustdesk.exe --get-id 2>&1
+    if ($idOutput) {
+        $rustdesk_id = $idOutput.ToString().Trim()
+    }
+    if ([string]::IsNullOrWhiteSpace($rustdesk_id)) {
+        Start-Sleep -Seconds 2
+    }
+}
+
 Pop-Location
 Write-Host "      Configuration applied." -ForegroundColor Green
 
@@ -152,7 +173,11 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "    Installation Complete!             " -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "RustDesk ID: $rustdesk_id" -ForegroundColor White
+if ([string]::IsNullOrWhiteSpace($rustdesk_id)) {
+    Write-Host "RustDesk ID: (open RustDesk to view)" -ForegroundColor Yellow
+} else {
+    Write-Host "RustDesk ID: $rustdesk_id" -ForegroundColor White
+}
 Write-Host "Password:    $rustdesk_pw" -ForegroundColor White
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
