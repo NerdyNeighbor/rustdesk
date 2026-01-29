@@ -87,8 +87,24 @@ Write-Host "      Done." -ForegroundColor Green
 
 # Install
 Write-Host "[4/6] Installing RustDesk..." -ForegroundColor Yellow
-Start-Process -FilePath $installerPath -ArgumentList "--silent-install" -Wait
-Start-Sleep -Seconds 5
+Start-Process -FilePath $installerPath -ArgumentList "--silent-install"
+
+# Wait for installation to complete by checking for the executable
+$installTimeout = 60
+$elapsed = 0
+while ($elapsed -lt $installTimeout) {
+    Start-Sleep -Seconds 2
+    $elapsed += 2
+    if (Test-Path "$env:ProgramFiles\RustDesk\rustdesk.exe") {
+        # Give it a few more seconds to finish writing files
+        Start-Sleep -Seconds 3
+        break
+    }
+}
+
+if (-not (Test-Path "$env:ProgramFiles\RustDesk\rustdesk.exe")) {
+    throw "Installation timed out - RustDesk executable not found"
+}
 Write-Host "      Installation complete." -ForegroundColor Green
 
 # Ensure service is running
