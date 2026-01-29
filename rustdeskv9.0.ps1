@@ -47,14 +47,27 @@ if ($installedVersion -eq $latestVersion) {
     Write-Host "      RustDesk $latestVersion is already installed." -ForegroundColor Green
     Write-Host ""
     Write-Host "Applying configuration..." -ForegroundColor Yellow
-    Push-Location "$env:ProgramFiles\RustDesk"
-    .\rustdesk.exe --config $rustdesk_cfg
+
+    $rustdeskExe = "$env:ProgramFiles\RustDesk\rustdesk.exe"
+
+    $configProc = Start-Process -FilePath $rustdeskExe -ArgumentList "--config", $rustdesk_cfg -PassThru -NoNewWindow
+    if (-not $configProc.WaitForExit(15000)) { $configProc.Kill() }
     Start-Sleep -Seconds 2
-    .\rustdesk.exe --password $rustdesk_pw
+
+    $pwProc = Start-Process -FilePath $rustdeskExe -ArgumentList "--password", $rustdesk_pw -PassThru -NoNewWindow
+    if (-not $pwProc.WaitForExit(15000)) { $pwProc.Kill() }
     Start-Sleep -Seconds 2
-    $idOutput = & .\rustdesk.exe --get-id 2>&1
-    $rustdesk_id = if ($idOutput) { $idOutput.ToString().Trim() } else { "Unknown" }
-    Pop-Location
+
+    $tempFile = [System.IO.Path]::GetTempFileName()
+    $idProc = Start-Process -FilePath $rustdeskExe -ArgumentList "--get-id" -PassThru -NoNewWindow -RedirectStandardOutput $tempFile
+    if ($idProc.WaitForExit(10000)) {
+        $rustdesk_id = (Get-Content $tempFile -ErrorAction SilentlyContinue)
+        if ($rustdesk_id) { $rustdesk_id = $rustdesk_id.Trim() }
+    } else {
+        $idProc.Kill()
+        $rustdesk_id = ""
+    }
+    Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Cyan
     Write-Host "RustDesk ID: $rustdesk_id" -ForegroundColor White
@@ -139,29 +152,41 @@ if ($attempt -ge $maxAttempts) {
 # Apply configuration
 Write-Host "[6/6] Applying configuration..." -ForegroundColor Yellow
 Start-Sleep -Seconds 5  # Give service time to initialize
-Push-Location "$env:ProgramFiles\RustDesk"
 
-# Apply config and password
-.\rustdesk.exe --config $rustdesk_cfg
-Start-Sleep -Seconds 2
-.\rustdesk.exe --password $rustdesk_pw
+$rustdeskExe = "$env:ProgramFiles\RustDesk\rustdesk.exe"
+
+# Apply config
+$configProc = Start-Process -FilePath $rustdeskExe -ArgumentList "--config", $rustdesk_cfg -PassThru -NoNewWindow
+if (-not $configProc.WaitForExit(15000)) {
+    $configProc.Kill()
+}
 Start-Sleep -Seconds 2
 
-# Get the ID (may take a moment to generate)
+# Apply password
+$pwProc = Start-Process -FilePath $rustdeskExe -ArgumentList "--password", $rustdesk_pw -PassThru -NoNewWindow
+if (-not $pwProc.WaitForExit(15000)) {
+    $pwProc.Kill()
+}
+Start-Sleep -Seconds 2
+
+# Get the ID
 $rustdesk_id = ""
 $idAttempts = 0
-while ([string]::IsNullOrWhiteSpace($rustdesk_id) -and $idAttempts -lt 10) {
+while ([string]::IsNullOrWhiteSpace($rustdesk_id) -and $idAttempts -lt 5) {
     $idAttempts++
-    $idOutput = & .\rustdesk.exe --get-id 2>&1
-    if ($idOutput) {
-        $rustdesk_id = $idOutput.ToString().Trim()
+    $tempFile = [System.IO.Path]::GetTempFileName()
+    $idProc = Start-Process -FilePath $rustdeskExe -ArgumentList "--get-id" -PassThru -NoNewWindow -RedirectStandardOutput $tempFile
+    if ($idProc.WaitForExit(10000)) {
+        $rustdesk_id = (Get-Content $tempFile -ErrorAction SilentlyContinue).Trim()
+    } else {
+        $idProc.Kill()
     }
+    Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
     if ([string]::IsNullOrWhiteSpace($rustdesk_id)) {
         Start-Sleep -Seconds 2
     }
 }
 
-Pop-Location
 Write-Host "      Configuration applied." -ForegroundColor Green
 
 # Cleanup
