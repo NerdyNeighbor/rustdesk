@@ -1,8 +1,8 @@
 # Nerdy Neighbor - RustDesk Silent Installer + Auto Config (per-logged-in user)
 # Purpose:
-# - Install RustDesk MSI silently (admin context)
+# - Install RustDesk MSI silently (admin/system context)
 # - Apply server config in the *interactive user* context (RustDesk config is per-user)
-# - Works reliably in remote PowerShell/admin sessions (uses full path to schtasks.exe)
+# - Works from remote PowerShell/RMM (handles 32-bit PowerShell WOW64 redirection via Sysnative)
 
 $ErrorActionPreference = "Stop"
 
@@ -12,7 +12,13 @@ $RustDeskMsiUrl = "https://github.com/rustdesk/rustdesk/releases/download/1.4.5/
 $MsiPath        = Join-Path $env:TEMP "rustdesk-1.4.5-x86_64.msi"
 
 $TaskName = "NN-RustDesk-ApplyConfig-Once"
-$SchTasks = Join-Path $env:WINDIR "System32\schtasks.exe"
+
+# schtasks path (Sysnative bypasses WOW64 when running from 32-bit PowerShell)
+if (Test-Path "$env:WINDIR\Sysnative\schtasks.exe") {
+    $SchTasks = "$env:WINDIR\Sysnative\schtasks.exe"
+} else {
+    $SchTasks = "$env:WINDIR\System32\schtasks.exe"
+}
 
 # ================= FUNCTIONS =================
 function Find-RustDeskExeSystemInstall {
@@ -88,8 +94,8 @@ $InteractiveUser = Get-InteractiveUser
 # Remove existing task if present (do NOT treat as fatal)
 & $SchTasks /Delete /TN $TaskName /F 2>$null | Out-Null
 
-# Create a task that runs at next logon. Use "Users" group so it runs in the logged-on user's context.
-# (No password required; runs when the user logs on interactively.)
+# Create a task that runs at next logon.
+# Note: Using ONLOGON without specifying /RU runs in the context of the user who logs on.
 $TaskCmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$ApplyPs1`""
 & $SchTasks /Create `
     /TN $TaskName `
@@ -100,6 +106,7 @@ $TaskCmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$ApplyPs1`
 
 Write-Host "[*] Scheduled per-user config apply task created: $TaskName"
 Write-Host "    Apply script: $ApplyPs1"
+Write-Host "    schtasks path: $SchTasks"
 
 # If a user is currently logged in, trigger immediately
 if ($InteractiveUser) {
