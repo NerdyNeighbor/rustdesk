@@ -7,17 +7,14 @@ $rustdesk_pw = -join ((65..90) + (97..122) | Get-Random -Count 12 | ForEach-Obje
 
 # ===== FUNCTIONS =====
 function Get-LatestRustDeskVersion {
-    # Follow the redirect from /releases/latest to get actual version
     $response = Invoke-WebRequest -Uri "https://github.com/rustdesk/rustdesk/releases/latest" -MaximumRedirection 0 -ErrorAction SilentlyContinue -UseBasicParsing
     $redirectUrl = $response.Headers.Location
 
     if (-not $redirectUrl) {
-        # Fallback: try getting it from the response
         $response = Invoke-WebRequest -Uri "https://github.com/rustdesk/rustdesk/releases/latest" -UseBasicParsing
         $redirectUrl = $response.BaseResponse.ResponseUri.AbsoluteUri
     }
 
-    # Extract version from URL like: https://github.com/rustdesk/rustdesk/releases/tag/1.3.6
     if ($redirectUrl -match '/releases/tag/(?<version>[\d\.]+)') {
         return $matches['version']
     }
@@ -28,6 +25,86 @@ function Get-LatestRustDeskVersion {
 function Get-RustDeskDownloadUrl {
     param([string]$Version)
     return "https://github.com/rustdesk/rustdesk/releases/download/$Version/rustdesk-$Version-x86_64.exe"
+}
+
+function Decode-RustDeskConfig {
+    param([string]$ConfigString)
+    $reversed = -join ($ConfigString.ToCharArray())[-1..-($ConfigString.Length)]
+    $jsonStr = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($reversed))
+    return $jsonStr | ConvertFrom-Json
+}
+
+function Apply-RustDeskConfig {
+    param(
+        [string]$ConfigString,
+        [string]$Password
+    )
+
+    # Decode the config
+    $config = Decode-RustDeskConfig -ConfigString $ConfigString
+
+    # Build the rendezvous server address (default port 21116)
+    $rendezvousServer = $config.host
+    if ($rendezvousServer -notmatch ':\d+$') {
+        $rendezvousServer = "${rendezvousServer}:21116"
+    }
+
+    # Config file paths
+    $userConfigDir = "$env:APPDATA\RustDesk\config"
+    $serviceConfigDir = "C:\Windows\ServiceProfiles\LocalService\AppData\Roaming\RustDesk\config"
+
+    foreach ($configDir in @($userConfigDir, $serviceConfigDir)) {
+        if (-not (Test-Path $configDir)) {
+            New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+        }
+
+        $configFile = Join-Path $configDir "RustDesk2.toml"
+
+        # Read existing config or create new
+        $tomlContent = @{}
+        if (Test-Path $configFile) {
+            $existingContent = Get-Content $configFile -Raw
+            # Parse simple TOML values
+            foreach ($line in ($existingContent -split "`n")) {
+                if ($line -match "^(\w+)\s*=\s*'([^']*)'") {
+                    $tomlContent[$matches[1]] = $matches[2]
+                } elseif ($line -match "^(\w+)\s*=\s*(\d+)") {
+                    $tomlContent[$matches[1]] = $matches[2]
+                }
+            }
+        }
+
+        # Update with our config
+        $tomlContent['rendezvous_server'] = $rendezvousServer
+        $tomlContent['key'] = $config.key
+
+        # Write the config file
+        $output = @()
+        foreach ($key in $tomlContent.Keys) {
+            $value = $tomlContent[$key]
+            if ($value -match '^\d+$') {
+                $output += "$key = $value"
+            } else {
+                $output += "$key = '$value'"
+            }
+        }
+
+        # Add options section if needed
+        $output += ""
+        $output += "[options]"
+        $output += "stop-service = 'N'"
+
+        $output -join "`n" | Set-Content -Path $configFile -Force -NoNewline
+    }
+
+    # Also write the key to RustDesk.toml for older versions
+    foreach ($configDir in @($userConfigDir, $serviceConfigDir)) {
+        $keyFile = Join-Path $configDir "RustDesk.toml"
+        @"
+rendezvous_server = '$rendezvousServer'
+key = '$($config.key)'
+"@ | Set-Content -Path $keyFile -Force
+    }
 }
 
 # ===== MAIN SCRIPT =====
@@ -48,16 +125,22 @@ if ($installedVersion -eq $latestVersion) {
     Write-Host ""
     Write-Host "Applying configuration..." -ForegroundColor Yellow
 
-    $rustdeskExe = "$env:ProgramFiles\RustDesk\rustdesk.exe"
-
-    $configProc = Start-Process -FilePath $rustdeskExe -ArgumentList "--config", $rustdesk_cfg -PassThru -NoNewWindow
-    if (-not $configProc.WaitForExit(15000)) { $configProc.Kill() }
+    Stop-Service -Name "RustDesk" -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
 
+    Apply-RustDeskConfig -ConfigString $rustdesk_cfg -Password $rustdesk_pw
+
+    Start-Service -Name "RustDesk" -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 3
+
+    $rustdeskExe = "$env:ProgramFiles\RustDesk\rustdesk.exe"
+
+    # Set password
     $pwProc = Start-Process -FilePath $rustdeskExe -ArgumentList "--password", $rustdesk_pw -PassThru -NoNewWindow
     if (-not $pwProc.WaitForExit(15000)) { $pwProc.Kill() }
     Start-Sleep -Seconds 2
 
+    # Get ID
     $tempFile = [System.IO.Path]::GetTempFileName()
     $idProc = Start-Process -FilePath $rustdeskExe -ArgumentList "--get-id" -PassThru -NoNewWindow -RedirectStandardOutput $tempFile
     if ($idProc.WaitForExit(10000)) {
@@ -68,6 +151,7 @@ if ($installedVersion -eq $latestVersion) {
         $rustdesk_id = ""
     }
     Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
+
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Cyan
     Write-Host "RustDesk ID: $rustdesk_id" -ForegroundColor White
@@ -87,7 +171,7 @@ $downloadUrl = Get-RustDeskDownloadUrl -Version $latestVersion
 $installerPath = Join-Path $tempDir "rustdesk-$latestVersion.exe"
 
 try {
-    $ProgressPreference = 'SilentlyContinue'  # Speeds up download significantly
+    $ProgressPreference = 'SilentlyContinue'
     Invoke-WebRequest -Uri $downloadUrl -OutFile $installerPath -UseBasicParsing
     Write-Host "      Download complete." -ForegroundColor Green
 } catch {
@@ -105,14 +189,13 @@ Write-Host "      Done." -ForegroundColor Green
 Write-Host "[4/6] Installing RustDesk..." -ForegroundColor Yellow
 Start-Process -FilePath $installerPath -ArgumentList "--silent-install"
 
-# Wait for installation to complete by checking for the executable
+# Wait for installation to complete
 $installTimeout = 60
 $elapsed = 0
 while ($elapsed -lt $installTimeout) {
     Start-Sleep -Seconds 2
     $elapsed += 2
     if (Test-Path "$env:ProgramFiles\RustDesk\rustdesk.exe") {
-        # Give it a few more seconds to finish writing files
         Start-Sleep -Seconds 3
         break
     }
@@ -151,22 +234,19 @@ if ($attempt -ge $maxAttempts) {
 
 # Apply configuration
 Write-Host "[6/6] Applying configuration..." -ForegroundColor Yellow
-Start-Sleep -Seconds 5  # Give service time to initialize
+Stop-Service -Name "RustDesk" -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
+
+Apply-RustDeskConfig -ConfigString $rustdesk_cfg -Password $rustdesk_pw
+
+Start-Service -Name "RustDesk" -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 3
 
 $rustdeskExe = "$env:ProgramFiles\RustDesk\rustdesk.exe"
 
-# Apply config
-$configProc = Start-Process -FilePath $rustdeskExe -ArgumentList "--config", $rustdesk_cfg -PassThru -NoNewWindow
-if (-not $configProc.WaitForExit(15000)) {
-    $configProc.Kill()
-}
-Start-Sleep -Seconds 2
-
-# Apply password
+# Set password
 $pwProc = Start-Process -FilePath $rustdeskExe -ArgumentList "--password", $rustdesk_pw -PassThru -NoNewWindow
-if (-not $pwProc.WaitForExit(15000)) {
-    $pwProc.Kill()
-}
+if (-not $pwProc.WaitForExit(15000)) { $pwProc.Kill() }
 Start-Sleep -Seconds 2
 
 # Get the ID
@@ -177,7 +257,8 @@ while ([string]::IsNullOrWhiteSpace($rustdesk_id) -and $idAttempts -lt 5) {
     $tempFile = [System.IO.Path]::GetTempFileName()
     $idProc = Start-Process -FilePath $rustdeskExe -ArgumentList "--get-id" -PassThru -NoNewWindow -RedirectStandardOutput $tempFile
     if ($idProc.WaitForExit(10000)) {
-        $rustdesk_id = (Get-Content $tempFile -ErrorAction SilentlyContinue).Trim()
+        $content = Get-Content $tempFile -ErrorAction SilentlyContinue
+        if ($content) { $rustdesk_id = $content.Trim() }
     } else {
         $idProc.Kill()
     }
