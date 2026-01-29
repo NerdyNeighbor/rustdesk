@@ -1,24 +1,36 @@
-# Nerdy Neighbor - RustDesk Silent Installer + Auto Config (per-logged-in user)
-# Purpose:
-# - Install RustDesk MSI silently (admin/system context)
-# - Apply server config in the *interactive user* context (RustDesk config is per-user)
-# - Works from remote PowerShell/RMM (handles 32-bit PowerShell WOW64 redirection via Sysnative)
+# NN RustDesk Installer Script
+# VERSION: NN-RD-2026-01-29-01 (bump this every time you change the script)
 
 $ErrorActionPreference = "Stop"
+
+Write-Host "============================================================"
+Write-Host "Nerdy Neighbor RustDesk Installer"
+Write-Host "SCRIPT VERSION: NN-RD-2026-01-29-01"
+Write-Host "HOST: $env:COMPUTERNAME"
+Write-Host "USER: $env:USERNAME"
+Write-Host ("PowerShell: {0}  | 64-bit PS Process: {1}  | 64-bit OS: {2}" -f `
+    $PSVersionTable.PSVersion, [Environment]::Is64BitProcess, [Environment]::Is64BitOperatingSystem)
+Write-Host "============================================================"
 
 # ================= CONFIG =================
 $ConfigString   = "=0nI9c2N5Z1QxtGOWdHR0RkRK9ENjRnYJ9kcQtmS4A1VIdXdQpnbEdFdy9GW3dnI6ISeltmIsIiI6ISawFmIsIiI6ISehxWZyJCLiwWYj9GbuIXZ2JXZz5mbiojI0N3boJye"
 $RustDeskMsiUrl = "https://github.com/rustdesk/rustdesk/releases/download/1.4.5/rustdesk-1.4.5-x86_64.msi"
 $MsiPath        = Join-Path $env:TEMP "rustdesk-1.4.5-x86_64.msi"
+$TaskName       = "NN-RustDesk-ApplyConfig-Once"
 
-$TaskName = "NN-RustDesk-ApplyConfig-Once"
+# schtasks path selection (handles WOW64 redirection)
+$SchTasksSysnative = "$env:WINDIR\Sysnative\schtasks.exe"
+$SchTasksSystem32  = "$env:WINDIR\System32\schtasks.exe"
 
-# schtasks path (Sysnative bypasses WOW64 when running from 32-bit PowerShell)
-if (Test-Path "$env:WINDIR\Sysnative\schtasks.exe") {
-    $SchTasks = "$env:WINDIR\Sysnative\schtasks.exe"
+if (Test-Path $SchTasksSysnative) {
+    $SchTasks = $SchTasksSysnative
 } else {
-    $SchTasks = "$env:WINDIR\System32\schtasks.exe"
+    $SchTasks = $SchTasksSystem32
 }
+
+Write-Host "[DEBUG] schtasks candidate (Sysnative): $SchTasksSysnative  | exists: $(Test-Path $SchTasksSysnative)"
+Write-Host "[DEBUG] schtasks candidate (System32):  $SchTasksSystem32   | exists: $(Test-Path $SchTasksSystem32)"
+Write-Host "[DEBUG] schtasks selected:             $SchTasks            | exists: $(Test-Path $SchTasks)"
 
 # ================= FUNCTIONS =================
 function Find-RustDeskExeSystemInstall {
@@ -33,17 +45,7 @@ function Find-RustDeskExeSystemInstall {
 }
 
 function Get-InteractiveUser {
-    # Returns DOMAIN\User for the console session, if someone is logged in; otherwise $null
-    try {
-        (Get-CimInstance Win32_ComputerSystem).UserName
-    } catch {
-        $null
-    }
-}
-
-# ================= PRECHECKS =================
-if (-not (Test-Path $SchTasks)) {
-    throw "schtasks.exe not found at expected path: $SchTasks"
+    try { (Get-CimInstance Win32_ComputerSystem).UserName } catch { $null }
 }
 
 # ================= INSTALL =================
@@ -54,6 +56,8 @@ Write-Host "[*] Installing RustDesk silently..."
 Start-Process msiexec.exe -ArgumentList "/i `"$MsiPath`" /qn /norestart" -Wait
 
 $RustDeskExe = Find-RustDeskExeSystemInstall
+Write-Host "[DEBUG] RustDeskExe detected: $RustDeskExe"
+
 if (-not $RustDeskExe) {
     throw "RustDesk executable not found in Program Files after install."
 }
@@ -66,10 +70,9 @@ $ApplyDir = Join-Path $env:ProgramData "NerdyNeighbor\RustDesk"
 $ApplyPs1 = Join-Path $ApplyDir "Apply-RustDesk-Config.ps1"
 New-Item -ItemType Directory -Path $ApplyDir -Force | Out-Null
 
-# Write a script that runs as the interactive user, applies config, then deletes the scheduled task (one-shot)
 @"
 `$ErrorActionPreference = 'Stop'
-
+Write-Host "NN Apply Script running as user: `$env:USERNAME on `$env:COMPUTERNAME"
 `$TaskName = '$TaskName'
 `$SchTasks = `"$SchTasks`"
 `$Exe      = `"$RustDeskExe`"
@@ -81,40 +84,38 @@ Get-Process -Name rustdesk,RustDesk -ErrorAction SilentlyContinue | Stop-Process
 # Apply config (writes to THIS user's profile)
 Start-Process -FilePath `$Exe -ArgumentList "--config `"`$Cfg`"" -Wait
 
-# Optional: launch RustDesk after config
-# Start-Process -FilePath `$Exe | Out-Null
-
 # One-shot cleanup: remove scheduled task so it only runs once
 & `$SchTasks /Delete /TN `$TaskName /F 2>`$null | Out-Null
 "@ | Set-Content -Path $ApplyPs1 -Encoding UTF8 -Force
 
+Write-Host "[DEBUG] Apply script written: $ApplyPs1"
+
 # ================= SCHEDULE TASK =================
 $InteractiveUser = Get-InteractiveUser
+Write-Host "[DEBUG] Interactive user: $InteractiveUser"
 
-# Remove existing task if present (do NOT treat as fatal)
-& $SchTasks /Delete /TN $TaskName /F 2>$null | Out-Null
+# Delete task if present (ignore errors)
+try {
+    & $SchTasks /Delete /TN $TaskName /F 2>$null | Out-Null
+    Write-Host "[DEBUG] Deleted existing task (if it existed)."
+} catch {
+    Write-Host "[DEBUG] Task delete threw, but continuing: $($_.Exception.Message)"
+}
 
-# Create a task that runs at next logon.
-# Note: Using ONLOGON without specifying /RU runs in the context of the user who logs on.
+# Create ONLOGON task (runs as the user who logs on)
 $TaskCmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$ApplyPs1`""
-& $SchTasks /Create `
-    /TN $TaskName `
-    /SC ONLOGON `
-    /RL HIGHEST `
-    /TR $TaskCmd `
-    /F | Out-Null
+Write-Host "[DEBUG] Creating task with TR: $TaskCmd"
 
+& $SchTasks /Create /TN $TaskName /SC ONLOGON /RL HIGHEST /TR $TaskCmd /F | Out-Null
 Write-Host "[*] Scheduled per-user config apply task created: $TaskName"
-Write-Host "    Apply script: $ApplyPs1"
-Write-Host "    schtasks path: $SchTasks"
 
-# If a user is currently logged in, trigger immediately
+# Trigger immediately if user is logged in
 if ($InteractiveUser) {
-    Write-Host "[*] Interactive user detected ($InteractiveUser). Triggering task now..."
+    Write-Host "[*] Triggering task now..."
     & $SchTasks /Run /TN $TaskName | Out-Null
-    Write-Host "[✓] Triggered. Config should apply in that user's profile within a few seconds."
+    Write-Host "[✓] Triggered."
 } else {
-    Write-Host "[!] No interactive user currently logged in. Config will apply at the next user logon."
+    Write-Host "[!] No interactive user logged in. Will apply on next login."
 }
 
 Write-Host "[✓] RustDesk installed. Config will apply per-user via scheduled task."
