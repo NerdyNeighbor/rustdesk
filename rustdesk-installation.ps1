@@ -2,7 +2,8 @@
 $ErrorActionPreference = 'Stop'
 
 # ===== CONFIGURATION =====
-$rustdesk_cfg = "=0nI9c2N5Z1QxtGOWdHR0RkRK9ENjRnYJ9kcQtmS4A1VIdXdQpnbEdFdy9GW3dnI6ISeltmIsIiI6ISawFmIsIiI6ISehxWZyJCLiwWYj9GbuIXZ2JXZz5mbiojI0N3boJye"
+$rustdesk_host = "192.168.0.210"
+$rustdesk_key = "wwXortWDnzPuwHWP8JkPrOIbtc4OJFDtDwV8kqCVy7g="
 $rustdesk_pw = -join ((65..90) + (97..122) | Get-Random -Count 12 | ForEach-Object { [char]$_ })
 
 # ===== FUNCTIONS =====
@@ -27,24 +28,14 @@ function Get-RustDeskDownloadUrl {
     return "https://github.com/rustdesk/rustdesk/releases/download/$Version/rustdesk-$Version-x86_64.exe"
 }
 
-function Decode-RustDeskConfig {
-    param([string]$ConfigString)
-    $reversed = -join ($ConfigString.ToCharArray())[-1..-($ConfigString.Length)]
-    $jsonStr = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($reversed))
-    return $jsonStr | ConvertFrom-Json
-}
-
 function Apply-RustDeskConfig {
     param(
-        [string]$ConfigString,
-        [string]$Password
+        [string]$Host,
+        [string]$Key
     )
 
-    # Decode the config
-    $config = Decode-RustDeskConfig -ConfigString $ConfigString
-
     # Build the rendezvous server address (default port 21116)
-    $rendezvousServer = $config.host
+    $rendezvousServer = $Host
     if ($rendezvousServer -notmatch ':\d+$') {
         $rendezvousServer = "${rendezvousServer}:21116"
     }
@@ -54,7 +45,7 @@ function Apply-RustDeskConfig {
     $serviceConfigDir = "C:\Windows\ServiceProfiles\LocalService\AppData\Roaming\RustDesk\config"
 
     # Build config content with correct format (key goes in [options] section)
-    $configContent = "rendezvous_server = '$rendezvousServer'`nnat_type = 1`nserial = 0`nunlock_pin = ''`ntrusted_devices = ''`n`n[options]`nstop-service = 'N'`nkey = '$($config.key)'`ncustom-rendezvous-server = '$($config.host)'"
+    $configContent = "rendezvous_server = '$rendezvousServer'`nnat_type = 1`nserial = 0`nunlock_pin = ''`ntrusted_devices = ''`n`n[options]`nstop-service = 'N'`nkey = '$Key'`ncustom-rendezvous-server = '$Host'"
 
     foreach ($configDir in @($userConfigDir, $serviceConfigDir)) {
         if (-not (Test-Path $configDir)) {
@@ -87,8 +78,9 @@ if ($installedVersion -eq $latestVersion) {
     Stop-Service -Name "RustDesk" -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
 
-    Apply-RustDeskConfig -ConfigString $rustdesk_cfg -Password $rustdesk_pw
+    Apply-RustDeskConfig -Host $rustdesk_host -Key $rustdesk_key
 
+    Set-Service -Name "RustDesk" -StartupType Automatic -ErrorAction SilentlyContinue
     Start-Service -Name "RustDesk" -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 3
 
@@ -196,8 +188,9 @@ Write-Host "[6/6] Applying configuration..." -ForegroundColor Yellow
 Stop-Service -Name "RustDesk" -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 
-Apply-RustDeskConfig -ConfigString $rustdesk_cfg -Password $rustdesk_pw
+Apply-RustDeskConfig -Host $rustdesk_host -Key $rustdesk_key
 
+Set-Service -Name "RustDesk" -StartupType Automatic -ErrorAction SilentlyContinue
 Start-Service -Name "RustDesk" -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 3
 
