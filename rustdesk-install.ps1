@@ -53,57 +53,16 @@ function Apply-RustDeskConfig {
     $userConfigDir = "$env:APPDATA\RustDesk\config"
     $serviceConfigDir = "C:\Windows\ServiceProfiles\LocalService\AppData\Roaming\RustDesk\config"
 
+    # Build config content with correct format (key goes in [options] section)
+    $configContent = "rendezvous_server = '$rendezvousServer'`nnat_type = 1`nserial = 0`nunlock_pin = ''`ntrusted_devices = ''`n`n[options]`nstop-service = 'N'`nkey = '$($config.key)'`ncustom-rendezvous-server = '$($config.host)'"
+
     foreach ($configDir in @($userConfigDir, $serviceConfigDir)) {
         if (-not (Test-Path $configDir)) {
             New-Item -ItemType Directory -Path $configDir -Force | Out-Null
         }
 
         $configFile = Join-Path $configDir "RustDesk2.toml"
-
-        # Read existing config or create new
-        $tomlContent = @{}
-        if (Test-Path $configFile) {
-            $existingContent = Get-Content $configFile -Raw
-            # Parse simple TOML values
-            foreach ($line in ($existingContent -split "`n")) {
-                if ($line -match "^(\w+)\s*=\s*'([^']*)'") {
-                    $tomlContent[$matches[1]] = $matches[2]
-                } elseif ($line -match "^(\w+)\s*=\s*(\d+)") {
-                    $tomlContent[$matches[1]] = $matches[2]
-                }
-            }
-        }
-
-        # Update with our config
-        $tomlContent['rendezvous_server'] = $rendezvousServer
-        $tomlContent['key'] = $config.key
-
-        # Write the config file
-        $output = @()
-        foreach ($key in $tomlContent.Keys) {
-            $value = $tomlContent[$key]
-            if ($value -match '^\d+$') {
-                $output += "$key = $value"
-            } else {
-                $output += "$key = '$value'"
-            }
-        }
-
-        # Add options section if needed
-        $output += ""
-        $output += "[options]"
-        $output += "stop-service = 'N'"
-
-        $output -join "`n" | Set-Content -Path $configFile -Force -NoNewline
-    }
-
-    # Also write the key to RustDesk.toml for older versions
-    foreach ($configDir in @($userConfigDir, $serviceConfigDir)) {
-        $keyFile = Join-Path $configDir "RustDesk.toml"
-        @"
-rendezvous_server = '$rendezvousServer'
-key = '$($config.key)'
-"@ | Set-Content -Path $keyFile -Force
+        $configContent | Set-Content -Path $configFile -Force
     }
 }
 
