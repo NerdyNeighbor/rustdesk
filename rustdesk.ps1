@@ -5,20 +5,33 @@
 $ErrorActionPreference = "Stop"
 
 # ================= CONFIG =================
-$ConfigString = "=0nI9c2N5Z1QxtGOWdHR0RkRK9ENjRnYJ9kcQtmS4A1VIdXdQpnbEdFdy9GW3dnI6ISeltmIsIiI6ISawFmIsIiI6ISehxWZyJCLiwWYj9GbuIXZ2JXZz5mbiojI0N3boJye"
+$ConfigString  = "=0nI9c2N5Z1QxtGOWdHR0RkRK9ENjRnYJ9kcQtmS4A1VIdXdQpnbEdFdy9GW3dnI6ISeltmIsIiI6ISawFmIsIiI6ISehxWZyJCLiwWYj9GbuIXZ2JXZz5mbiojI0N3boJye"
 $RustDeskMsiUrl = "https://github.com/rustdesk/rustdesk/releases/download/1.4.5/rustdesk-1.4.5-x86_64.msi"
-$MsiPath = Join-Path $env:TEMP "rustdesk-1.4.5-x86_64.msi"
+$MsiPath        = Join-Path $env:TEMP "rustdesk-1.4.5-x86_64.msi"
 
 # ================= FUNCTIONS =================
 function Find-RustDeskExe {
     $paths = @(
-        Join-Path $env:ProgramFiles "RustDesk\rustdesk.exe"
-        Join-Path ${env:ProgramFiles(x86)} "RustDesk\rustdesk.exe"
-        Join-Path $env:LocalAppData "Programs\RustDesk\rustdesk.exe"
+        (Join-Path $env:ProgramFiles "RustDesk\RustDesk.exe"),
+        (Join-Path $env:ProgramFiles "RustDesk\rustdesk.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "RustDesk\RustDesk.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "RustDesk\rustdesk.exe"),
+        (Join-Path $env:LocalAppData "Programs\RustDesk\RustDesk.exe"),
+        (Join-Path $env:LocalAppData "Programs\RustDesk\rustdesk.exe")
     )
 
     foreach ($p in $paths) {
         if (Test-Path $p) { return $p }
+    }
+
+    # Fallback: search common locations (a bit slower, but reliable)
+    $fallbackRoots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LocalAppData) | Where-Object { $_ -and (Test-Path $_) }
+    foreach ($root in $fallbackRoots) {
+        $hit = Get-ChildItem -Path $root -Filter "rustdesk.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($hit) { return $hit.FullName }
+
+        $hit2 = Get-ChildItem -Path $root -Filter "RustDesk.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($hit2) { return $hit2.FullName }
     }
 
     return $null
