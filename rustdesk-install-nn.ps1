@@ -30,12 +30,12 @@ function Get-RustDeskDownloadUrl {
 
 function Apply-RustDeskConfig {
     param(
-        [string]$Host,
-        [string]$Key
+        [string]$ServerHost,
+        [string]$ServerKey
     )
 
     # Build the rendezvous server address (default port 21116)
-    $rendezvousServer = $Host
+    $rendezvousServer = $ServerHost
     if ($rendezvousServer -notmatch ':\d+$') {
         $rendezvousServer = "${rendezvousServer}:21116"
     }
@@ -45,7 +45,7 @@ function Apply-RustDeskConfig {
     $serviceConfigDir = "C:\Windows\ServiceProfiles\LocalService\AppData\Roaming\RustDesk\config"
 
     # Build config content with correct format (key goes in [options] section)
-    $configContent = "rendezvous_server = '$rendezvousServer'`nnat_type = 1`nserial = 0`nunlock_pin = ''`ntrusted_devices = ''`n`n[options]`nstop-service = 'N'`nkey = '$Key'`ncustom-rendezvous-server = '$Host'"
+    $configContent = "rendezvous_server = '$rendezvousServer'`nnat_type = 1`nserial = 0`nunlock_pin = ''`ntrusted_devices = ''`n`n[options]`nstop-service = 'N'`nkey = '$ServerKey'`ncustom-rendezvous-server = '$ServerHost'"
 
     foreach ($configDir in @($userConfigDir, $serviceConfigDir)) {
         if (-not (Test-Path $configDir)) {
@@ -78,7 +78,7 @@ if ($installedVersion -eq $latestVersion) {
     Stop-Service -Name "RustDesk" -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
 
-    Apply-RustDeskConfig -Host $rustdesk_host -Key $rustdesk_key
+    Apply-RustDeskConfig -ServerHost $rustdesk_host -ServerKey $rustdesk_key
 
     Set-Service -Name "RustDesk" -StartupType Automatic -ErrorAction SilentlyContinue
     Start-Service -Name "RustDesk" -ErrorAction SilentlyContinue
@@ -188,7 +188,7 @@ Write-Host "[6/6] Applying configuration..." -ForegroundColor Yellow
 Stop-Service -Name "RustDesk" -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 
-Apply-RustDeskConfig -Host $rustdesk_host -Key $rustdesk_key
+Apply-RustDeskConfig -ServerHost $rustdesk_host -ServerKey $rustdesk_key
 
 Set-Service -Name "RustDesk" -StartupType Automatic -ErrorAction SilentlyContinue
 Start-Service -Name "RustDesk" -ErrorAction SilentlyContinue
