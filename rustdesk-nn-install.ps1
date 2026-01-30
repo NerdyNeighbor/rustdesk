@@ -108,6 +108,32 @@ if ($installedVersion -eq $latestVersion) {
     Write-Host "RustDesk ID: $rustdesk_id" -ForegroundColor White
     Write-Host "Password:    $rustdesk_pw" -ForegroundColor White
     Write-Host "========================================" -ForegroundColor Cyan
+
+    # Send to dashboard
+    Write-Host ""
+    $customerName = Read-Host "Enter customer name"
+
+    if (-not [string]::IsNullOrWhiteSpace($customerName)) {
+        $dashboardUrl = "https://rustdesk-admin.nerdyneighbor.net/api/submit"
+        $body = @{
+            name = $customerName
+            id = $rustdesk_id
+            password = $rustdesk_pw
+        } | ConvertTo-Json
+
+        try {
+            Invoke-RestMethod -Uri $dashboardUrl -Method POST -Body $body -ContentType "application/json" -TimeoutSec 10 | Out-Null
+            Write-Host ""
+            Write-Host "Credentials sent to dashboard." -ForegroundColor Green
+        } catch {
+            Write-Host ""
+            Write-Host "Warning: Could not send to dashboard." -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host ""
+        Write-Host "Skipped sending to dashboard (no name entered)." -ForegroundColor Yellow
+    }
+
     exit 0
 }
 
@@ -237,5 +263,29 @@ if ([string]::IsNullOrWhiteSpace($rustdesk_id)) {
     Write-Host "RustDesk ID: $rustdesk_id" -ForegroundColor White
 }
 Write-Host "Password:    $rustdesk_pw" -ForegroundColor White
-Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
+
+# ===== SEND TO DASHBOARD =====
+Write-Host ""
+$customerName = Read-Host "Enter customer name"
+
+if (-not [string]::IsNullOrWhiteSpace($customerName)) {
+    $dashboardUrl = "https://rustdesk-admin.nerdyneighbor.net/api/submit"
+    $body = @{
+        name = $customerName
+        id = $rustdesk_id
+        password = $rustdesk_pw
+    } | ConvertTo-Json
+
+    try {
+        Invoke-RestMethod -Uri $dashboardUrl -Method POST -Body $body -ContentType "application/json" -TimeoutSec 10 | Out-Null
+        Write-Host ""
+        Write-Host "Credentials sent to dashboard." -ForegroundColor Green
+    } catch {
+        Write-Host ""
+        Write-Host "Warning: Could not send to dashboard." -ForegroundColor Yellow
+    }
+} else {
+    Write-Host ""
+    Write-Host "Skipped sending to dashboard (no name entered)." -ForegroundColor Yellow
+}
